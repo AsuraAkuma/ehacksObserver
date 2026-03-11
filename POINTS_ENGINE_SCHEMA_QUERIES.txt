@@ -1,0 +1,200 @@
+-- Points Engine supplemental schema
+-- This file intentionally contains all additional SQL DDL in one place.
+-- Existing tables `challenges` and `challenge_completions` are reused.
+
+-- 1) Track webhook delivery IDs for idempotent processing.
+CREATE TABLE IF NOT EXISTS `webhook_deliveries` (
+  `delivery_id` varchar(128) NOT NULL,
+  `event_name` varchar(100) NOT NULL,
+  `event_action` varchar(100) DEFAULT NULL,
+  `repo_id` int(11) DEFAULT NULL,
+  `received_at` datetime(6) NOT NULL,
+  `processed_at` datetime(6) DEFAULT NULL,
+  `status` varchar(30) NOT NULL DEFAULT 'received',
+  `error_message` varchar(2000) DEFAULT NULL,
+  PRIMARY KEY (`delivery_id`),
+  KEY `idx_webhook_repo_event` (`repo_id`, `event_name`, `event_action`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- 2) Commit metadata not present in the current `commits` table.
+-- Keep `commits` as canonical ingestion table; this table stores details required for checks.
+CREATE TABLE IF NOT EXISTS `commit_details` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `repo_id` int(11) NOT NULL,
+  `installation_id` int(11) DEFAULT NULL,
+  `push_id` int(11) DEFAULT NULL,
+  `commit_sha` varchar(40) NOT NULL,
+  `author_email` varchar(255) DEFAULT NULL,
+  `author_username` varchar(255) DEFAULT NULL,
+  `committed_at` bigint(20) NOT NULL,
+  `message` text NOT NULL,
+  `additions` int(11) NOT NULL DEFAULT 0,
+  `deletions` int(11) NOT NULL DEFAULT 0,
+  `changed_files_json` longtext DEFAULT NULL,
+  `top_level_dirs_json` longtext DEFAULT NULL,
+  `file_extensions_json` longtext DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT current_timestamp(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_commit_details_repo_sha` (`repo_id`, `commit_sha`),
+  KEY `idx_commit_details_repo_author_time` (`repo_id`, `author_email`, `committed_at`),
+  KEY `idx_commit_details_repo_username_time` (`repo_id`, `author_username`, `committed_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- 3) PR event cache for merge-related checks.
+CREATE TABLE IF NOT EXISTS `pull_request_events` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `repo_id` int(11) NOT NULL,
+  `installation_id` int(11) DEFAULT NULL,
+  `pr_number` int(11) NOT NULL,
+  `author_username` varchar(255) DEFAULT NULL,
+  `author_email` varchar(255) DEFAULT NULL,
+  `opened_at` bigint(20) NOT NULL,
+  `closed_at` bigint(20) DEFAULT NULL,
+  `merged_at` bigint(20) DEFAULT NULL,
+  `is_merged` bit(1) NOT NULL DEFAULT b'0',
+  `additions` int(11) NOT NULL DEFAULT 0,
+  `deletions` int(11) NOT NULL DEFAULT 0,
+  `changed_files_json` longtext DEFAULT NULL,
+  `updated_at` datetime(6) NOT NULL DEFAULT current_timestamp(6) ON UPDATE current_timestamp(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_pr_events_repo_number` (`repo_id`, `pr_number`),
+  KEY `idx_pr_events_repo_author` (`repo_id`, `author_username`),
+  KEY `idx_pr_events_repo_merged` (`repo_id`, `is_merged`, `merged_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- 4) Branch creation history for branch achievements.
+CREATE TABLE IF NOT EXISTS `branch_events` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `repo_id` int(11) NOT NULL,
+  `installation_id` int(11) DEFAULT NULL,
+  `branch_name` varchar(255) NOT NULL,
+  `creator_username` varchar(255) DEFAULT NULL,
+  `creator_email` varchar(255) DEFAULT NULL,
+  `created_at_unix` bigint(20) NOT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT current_timestamp(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_branch_events_repo_branch` (`repo_id`, `branch_name`),
+  KEY `idx_branch_events_repo_creator` (`repo_id`, `creator_username`),
+  KEY `idx_branch_events_repo_created_at_unix` (`repo_id`, `created_at_unix`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- 5) Repository aggregate cache for expensive/hourly checks.
+CREATE TABLE IF NOT EXISTS `repo_aggregate_cache` (
+  `repo_id` int(11) NOT NULL,
+  `file_count` int(11) NOT NULL DEFAULT 0,
+  `language_counts_json` longtext DEFAULT NULL,
+  `branch_naming_conventions_json` longtext DEFAULT NULL,
+  `contributor_count` int(11) NOT NULL DEFAULT 0,
+  `commit_count` int(11) NOT NULL DEFAULT 0,
+  `has_readme` bit(1) NOT NULL DEFAULT b'0',
+  `has_license` bit(1) NOT NULL DEFAULT b'0',
+  `has_contributing` bit(1) NOT NULL DEFAULT b'0',
+  `has_tests_dir` bit(1) NOT NULL DEFAULT b'0',
+  `readme_text` longtext DEFAULT NULL,
+  `computed_at` datetime(6) NOT NULL,
+  PRIMARY KEY (`repo_id`),
+  KEY `idx_repo_cache_computed_at` (`computed_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- 6) Scheduler run log to support 30/60 minute managed jobs.
+CREATE TABLE IF NOT EXISTS `scheduler_runs` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `job_name` varchar(150) NOT NULL,
+  `started_at` datetime(6) NOT NULL,
+  `finished_at` datetime(6) DEFAULT NULL,
+  `status` varchar(20) NOT NULL DEFAULT 'running',
+  `details` varchar(2000) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_scheduler_job_started` (`job_name`, `started_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- 7) Ensure one-time award per user/challenge in existing table.
+-- Adjust if an equivalent unique key already exists.
+ALTER TABLE `challenge_completions`
+  ADD UNIQUE KEY IF NOT EXISTS `uk_challenge_completions_user_challenge` (`user_id`, `challenge_id`);
+
+-- 8) Optional quality-of-life indexes for existing tables.
+-- Safe to run if key names do not already exist.
+ALTER TABLE `team_members`
+  ADD KEY IF NOT EXISTS `idx_team_members_team_id` (`team_id`),
+  ADD KEY IF NOT EXISTS `idx_team_members_points` (`points`);
+
+ALTER TABLE `registrations`
+  ADD KEY IF NOT EXISTS `idx_registrations_github_username` (`github_username`);
+
+ALTER TABLE `teams`
+  ADD KEY IF NOT EXISTS `idx_teams_installation_id` (`installation_id`);
+
+-- 9) Hidden challenge allocation (25% per category, rounded up) for current points catalog.
+-- Assumes challenges.name stores the point key (e.g., typed_architect, feature_builder).
+
+UPDATE `challenges`
+SET `is_hidden` = 1
+WHERE `name` IN (
+  -- repository (5 hidden)
+  'growing_codebase',
+  'team_player',
+  'final_hour_sprint',
+  'documentation_champion',
+  'polyglot_builder',
+  -- commit (3 hidden)
+  'feature_builder',
+  'bug_slayer',
+  'rapid_iteration',
+  -- branch (2 hidden)
+  'feature_flow',
+  'ticket_tracker',
+  -- file (4 hidden)
+  'project_starter',
+  'documented_intent',
+  'setup_wizard',
+  'dependency_manager'
+);
+
+UPDATE `challenges`
+SET `is_hidden` = 0
+WHERE `name` IN (
+  -- repository (non-hidden)
+  'typed_architect',
+  'pythonista',
+  'js_craftsman',
+  'jvm_builder',
+  'gopher',
+  'systems_rustacean',
+  'cpp_builder',
+  'csharp_dev',
+  'rubyist',
+  'php_builder',
+  'commit_milestone',
+  'quality_guardian',
+  'refactor_champion',
+  'balanced_builder',
+  -- commit (non-hidden)
+  'refactor_specialist',
+  'breaking_changes',
+  'commit_stylist',
+  'milestone_contributor',
+  'merge_maker',
+  'integration_expert',
+  'large_scale_contributor',
+  'focused_contributor',
+  'lightning_merge',
+  -- branch (non-hidden)
+  'branch_creator',
+  'hotfix_hero',
+  'release_engineer',
+  'naming_master',
+  'branch_strategist',
+  -- file (non-hidden)
+  'licensed_and_legit',
+  'contributor_friendly',
+  'demo_ready',
+  'test_ready',
+  'test_contributor',
+  'documentation_advocate',
+  'container_captain',
+  'full_stack_commit',
+  'heavy_lifter',
+  'code_cleaner',
+  'smoke_test'
+);

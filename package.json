@@ -1,0 +1,45 @@
+{
+  "name": "ehacksobserver",
+  "version": "0.0.1",
+  "description": "The **Metrics Bot** is a read-only GitHub App that monitors participating repositories during the hackathon to track progress, activity, and milestone achievements. It securely analyzes repository metadata and development activity to power automated achievements and leaderboard insights.",
+  "main": "index.js",
+  "scripts": {
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "node --test tests/unit",
+    "test:e2e": "node --test tests/e2e",
+    "test:unit:ci": "node --test --test-reporter=tap --test-reporter-destination=artifacts/test-reports/unit.tap tests/unit",
+    "test:e2e:ci": "node --test --test-reporter=tap --test-reporter-destination=artifacts/test-reports/e2e.tap tests/e2e",
+    "build:backend": "mkdir -p artifacts/backend && npm pack --pack-destination artifacts/backend",
+    "build": "npm run build:backend",
+    "dev": "nodemon app.js",
+    "start": "node app.js",
+    "verify:points": "node scripts/verifyPointsSetup.js",
+    "points:total": "node scripts/totalChallengePoints.js",
+    "backfill:github": "node scripts/backfillGithubData.js",
+    "job:audit:missed-challenges": "node scripts/runMissedChallengeAuditJob.js",
+    "job:cleanup:challenge-duplicates": "node scripts/runChallengeDuplicateCleanupJob.js",
+    "job:recalculate:points": "node scripts/runPointsRecalculationJob.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/siueehacks/ehacksObserver.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/siueehacks/ehacksObserver/issues"
+  },
+  "homepage": "https://github.com/siueehacks/ehacksObserver#readme",
+  "devDependencies": {
+    "smee-client": "^2.0.1"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "mysql2": "^3.18.0",
+    "nodemailer": "^8.0.1",
+    "nodemon": "^3.1.14",
+    "octokit": "^4.1.1"
+  }
+}

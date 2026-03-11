@@ -1,0 +1,108 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  backend-deploy:
+    name: Backend Deploy
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    environment: production
+
+    steps:
+      - name: Validate backend deployment secrets
+        run: |
+          set -euo pipefail
+          test -n "${{ secrets.BACKEND_DEPLOY_HOST }}" || (echo "Missing BACKEND_DEPLOY_HOST" && exit 1)
+          test -n "${{ secrets.BACKEND_DEPLOY_USER }}" || (echo "Missing BACKEND_DEPLOY_USER" && exit 1)
+          test -n "${{ secrets.BACKEND_DEPLOY_SSH_KEY }}" || (echo "Missing BACKEND_DEPLOY_SSH_KEY" && exit 1)
+          test -n "${{ secrets.BACKEND_DEPLOY_PATH }}" || (echo "Missing BACKEND_DEPLOY_PATH" && exit 1)
+
+      - name: Deploy backend over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          BACKEND_DEPLOY_PATH: ${{ secrets.BACKEND_DEPLOY_PATH }}
+        with:
+          host: ${{ secrets.BACKEND_DEPLOY_HOST }}
+          username: ${{ secrets.BACKEND_DEPLOY_USER }}
+          key: ${{ secrets.BACKEND_DEPLOY_SSH_KEY }}
+          passphrase: ${{ secrets.BACKEND_DEPLOY_SSH_PASSPHRASE }}
+          script_stop: false
+          debug: true
+          envs: BACKEND_DEPLOY_PATH
+          script: |
+            set -eo pipefail
+            trap 'echo "Backend deploy failed at line $LINENO" >&2' ERR
+
+            CONFIGURED_PATH="$(printf '%s' "${BACKEND_DEPLOY_PATH:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+
+            DEPLOY_DIR=""
+            for candidate in \
+              "$CONFIGURED_PATH" \
+              "$HOME/ehacksObserver/server" \
+              "$HOME/ehacksObserver" \
+              "/home/$USER/ehacksObserver/server" \
+              "/home/$USER/ehacksObserver" \
+              "/opt/ehacksObserver/server" \
+              "/opt/ehacksObserver"
+            do
+              if [ -n "$candidate" ] && [ -d "$candidate" ]; then
+                DEPLOY_DIR="$candidate"
+                break
+              fi
+            done
+
+            if [ -z "$DEPLOY_DIR" ]; then
+              echo "No usable backend deploy directory found" >&2
+              exit 1
+            fi
+
+            cd "$DEPLOY_DIR"
+
+            if [ -f "server/Dockerfile" ]; then
+              cd server
+            fi
+
+            if [ ! -f "Dockerfile" ]; then
+              echo "No Dockerfile found in resolved backend deploy directory" >&2
+              exit 1
+            fi
+
+            if command -v docker >/dev/null 2>&1; then
+              DOCKER_CMD="docker"
+            elif command -v sudo >/dev/null 2>&1 && sudo -n docker version >/dev/null 2>&1; then
+              DOCKER_CMD="sudo docker"
+            else
+              echo "No supported Docker command found" >&2
+              exit 1
+            fi
+
+            if command -v docker-compose >/dev/null 2>&1; then
+              COMPOSE_CMD="docker-compose"
+            elif command -v sudo >/dev/null 2>&1 && sudo -n docker-compose version >/dev/null 2>&1; then
+              COMPOSE_CMD="sudo docker-compose"
+            elif docker compose version >/dev/null 2>&1; then
+              COMPOSE_CMD="docker compose"
+            else
+              echo "No supported Compose command found" >&2
+              exit 1
+            fi
+
+            if [ ! -f "docker-compose.yml" ] && [ ! -f "compose.yml" ] && [ ! -f "compose.yaml" ]; then
+              echo "No compose file found for backend deploy" >&2
+              exit 1
+            fi
+
+            ${DOCKER_CMD} build .
+            ${COMPOSE_CMD} down || true
+            ${COMPOSE_CMD} up -d

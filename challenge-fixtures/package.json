@@ -1,0 +1,6 @@
+{
+    "name": "challenge-fixtures",
+    "private": true,
+    "version": "1.0.0",
+    "description": "Fixture manifest to trigger dependency-related challenge checks"
+}
